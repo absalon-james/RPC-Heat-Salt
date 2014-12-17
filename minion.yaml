@@ -1,0 +1,62 @@
+heat_template_version: 2013-05-23
+
+description: |
+  Software Configuration script to install salt-minion and connect the minion
+  to a salt master.
+
+resources:
+  config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      group: script
+      inputs:
+        - name: public_key
+        - name: master
+      config: |
+        #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-minion
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
+
+        chmod -R 0600 ${logdir}
+        chmod 0700 /root/.ssh/coms_rsa
+
+        # Add coms from minions to master
+        echo "$public_key" >> /root/.ssh/authorized_keys
+
+        # Install salt minion
+        curl -L http://bootstrap.saltstack.org | sh -s -- git v2014.1.13
+        echo master: $master >> /etc/salt/minion
+
+        service salt-minion restart
+
+        ssh-keyscan -H $master >> /root/.ssh/known_hosts
+
+        MASTER_PKI_PATH="/etc/salt/pki/master/minions/"
+        MASTER_PKI_PATH_PRE="/etc/salt/pki/master/minions_pre/"
+        MINION_PKI_PATH="/etc/salt/pki/minion/minion.pub"
+        HOSTNAME="$(python  -c 'import socket; print socket.getfqdn()')"
+
+        while [ ! -s ${MINION_PKI_PATH} ]; do
+            echo "Waiting for ${MINION_PKI_PATH} to have non-zero content."
+            sleep 2
+        done
+
+        cp $MINION_PKI_PATH /root/minion_key
+
+        scp -i /root/.ssh/coms_rsa /root/minion_key root@$master:/tmp/$HOSTNAME
+
+        ssh -i /root/.ssh/coms_rsa root@$master "mv /tmp/$HOSTNAME $MASTER_PKI_PATH$HOSTNAME; chmod 700 $MASTER_PKI_PATH$HOSTNAME; rm $MASTER_PKI_PATH_PRE$HOSTNAME"
+
+        service salt-minion restart
+        rm /root/minion_key
+        rm /root/.ssh/coms_rsa
+        touch ${prefix}.ran
+
+outputs:
+  config:
+    value:
+      get_resource: config

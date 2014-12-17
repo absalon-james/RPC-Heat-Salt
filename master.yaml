@@ -1,0 +1,46 @@
+heat_template_version: 2013-05-23
+
+description: |
+  Software Configuration script to install salt master.
+
+resources:
+
+  config:
+    type: OS::Heat::SoftwareConfig
+    properties:
+      group: script
+      inputs:
+        - name: salt_version
+        - name: public_key
+      config: |
+        #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-master
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
+
+        chmod -R 0600 ${logdir}
+        chmod 0700 /root/.ssh/coms_rsa
+
+        # Add coms from minions to master
+        echo "$public_key" >> /root/.ssh/authorized_keys
+
+        # Install git
+        apt-get install -y git curl
+
+        # Install salt master
+        echo "Install Salt Master"
+        curl -L http://bootstrap.saltstack.org | sh -s -- -M -N git $salt_version
+        mkdir -p /srv/salt
+        echo -e 'file_roots:\n  base:\n    - /srv/salt' >> /etc/salt/master
+
+        # Finally - Restart salt service
+        service salt-master restart
+        touch ${prefix}.ran
+
+outputs:
+  config:
+    value:
+      get_resource: config
